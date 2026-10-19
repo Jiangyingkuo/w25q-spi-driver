@@ -1,0 +1,41 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2835", "brcm,bcm2708";
+    /* disable spi-dev for spi0.1 */
+    fragment@0 {
+        target = <&spi0>;
+        __overlay__ {
+			/* redundant(already okay), only kept for portability */
+            status = "okay";
+			
+			/*release CE1 from spidev*/
+            spidev@1{
+                status = "disabled";
+            };
+        };
+    };
+
+	/*add W25Q on CE1*/
+    fragment@1 {
+        target = <&spi0>;
+        __overlay__ {
+			/* same as base dtb; only to avoid dtc warning */
+			#address-cells =<1>;
+			#size-cells =<0>;
+
+            /*w25Q*/
+			/* node name: generic name + @unit-address (equal to reg)*/
+            flash@1 {
+                compatible = "demo,w25qxx";
+
+				/* chip select = CE1 */
+                reg = <1>;
+
+				/*SCLK max speed*/
+				spi-max-frequency = <20000000>;
+            };
+        };
+    };
+};
