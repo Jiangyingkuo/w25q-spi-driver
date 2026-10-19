@@ -18,3 +18,5 @@ dtoverlay=w25q
 ```
 sudo reboot
 ```
+## match device via of_match_table
+driver透過`of_match_table`比對device tree節點的compatible
