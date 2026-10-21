@@ -1,6 +1,9 @@
 #include <linux/module.h>
 #include <linux/spi/spi.h>
 #include <linux/mod_devicetable.h>
+#include <linux/slab.h>
+
+static u8 rd_cmd =0x03;
 
 //Read JEDEC ID
 static int Read_ID(struct spi_device *spi)
@@ -66,16 +69,46 @@ static int rd_state(struct spi_device *spi,const u8 cmd, u8 *val)
 		printk(KERN_ERR"read status register failed: %d\n",ret);
 	return ret;
 }
+//read data(0x03)
+static int rd_data(struct spi_device *spi,int addr,int len,u8 *buf)
+{
+	int ret;
+	u8 cmd_addr[4];
+	struct spi_transfer t[2];
+	struct spi_message m;
+	spi_message_init(&m);
+	memset(t,0,sizeof(t));
+
+	cmd_addr[0]=rd_cmd;
+	cmd_addr[1] =(u8)(addr >>16);
+	cmd_addr[2] =(u8)(addr >>8);
+	cmd_addr[3] =(u8)(addr);
+
+	t[0].tx_buf = cmd_addr;
+	t[0].len =sizeof(cmd_addr);
+	spi_message_add_tail(&t[0], &m);
+
+	t[1].rx_buf =buf;
+	t[1].len =len;
+	spi_message_add_tail(&t[1],&m);
+
+	ret =spi_sync(spi,&m);
+	if(ret)
+		printk(KERN_ERR"read data failed:%d\n",ret);
+	return ret;
+}
 
 static int w25q_probe(struct spi_device *spi)
 {
 	int ret;
 	u8 raw_val;
+	u8 *data_buff;
+
 	printk(KERN_INFO "w25q probe called\n");
 
 	ret =Read_ID(spi);
 	if (ret) return ret;
-	
+
 	ret=rd_state(spi,0x05, &raw_val);
 	if (ret) return ret;
 	printk(KERN_INFO "WEL is : %d\n",(raw_val >> 1)& 1 );
@@ -88,6 +121,14 @@ static int w25q_probe(struct spi_device *spi)
 	if(raw_val & (1 <<1)){
 		printk(KERN_INFO"WEL is set 1 \n");
 	}
+	data_buff =(u8 *)kmalloc(251,GFP_KERNEL);
+	if (data_buff ==NULL)
+		return -ENOMEM;
+	ret=rd_data(spi,0x000005,251,data_buff);
+	if (!ret)
+		print_hex_dump(KERN_INFO, "w25q: ", DUMP_PREFIX_OFFSET, 16, 1,data_buff, 251, false);
+
+	kfree(data_buff);
 	return ret;
 }
 static int w25q_remove(struct spi_device *spi)
