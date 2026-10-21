@@ -33,9 +33,21 @@ driver透過`of_match_table`比對device tree節點的compatible
 >SPI core是以message為單位控制CS的，當message開始時拉低，整個傳完才拉高。
 >所以把送指令和讀資料放在同一個message裡，CS中間才不會被放開，W25Q才會把它們當成同一個指令。
 
->[!WARNING]
->目前狀態：尚需在硬體上驗證（模組排針焊點需重焊）
+## Read status register
+送出command `0x05`後，晶片回傳1個byte
 
-##references
+檢查bit 1，可讀取Write enable latch的值
+
+## Write Enable 
+送出`0x06`後，WEL被設成1；完成寫入或抹除後，WEL會自動清回0
+
+## Test result
+```
+w25q probe called
+ef, 40, 17
+WEL is : 0
+WEL is set 1
+```
+## references
 W25Q64 datasheet
 https://docs.rs-online.com/9bfc/0900766b81704060.pdf

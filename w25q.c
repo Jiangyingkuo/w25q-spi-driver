@@ -3,7 +3,7 @@
 #include <linux/mod_devicetable.h>
 
 //Read JEDEC ID
-int Read_ID(struct spi_device *spi)
+static int Read_ID(struct spi_device *spi)
 {
 	u8 cmd =0x9F;
 	int ret;
@@ -28,12 +28,66 @@ int Read_ID(struct spi_device *spi)
 	printk(KERN_INFO "%x, %x, %x \n", rd_buf[0],rd_buf[1],rd_buf[2]);
 	return 0;
 }
+// Write Enable (06h)
+static int write_en(struct spi_device *spi)
+{
+	u8 cmd =0x06;
+	int ret;
+	struct spi_transfer t ={0};
+	struct spi_message m;
+	spi_message_init(&m);
+	t.tx_buf =&cmd;
+	t.len =sizeof(cmd);
+	spi_message_add_tail(&t,&m);
+	
+	ret =spi_sync(spi,&m);
+	if(ret <0)
+		printk(KERN_ERR"write enable failed:%d\n",ret);
+	return ret;
+}
+//read status register 1/2/3
+static int rd_state(struct spi_device *spi,const u8 cmd, u8 *val)
+{
+	int ret;
+	struct spi_transfer t[2];
+	struct spi_message m;
+	spi_message_init(&m);
+	memset(t,0,sizeof(t));
+	t[0].tx_buf =&cmd;
+	t[0].len=sizeof(cmd);
+	spi_message_add_tail(&t[0],&m);
+
+	t[1].rx_buf =val;
+	t[1].len =sizeof(*val);
+	spi_message_add_tail(&t[1],&m);
+
+	ret =spi_sync(spi,&m);
+	if(ret <0 ) 
+		printk(KERN_ERR"read status register failed: %d\n",ret);
+	return ret;
+}
 
 static int w25q_probe(struct spi_device *spi)
 {
 	int ret;
+	u8 raw_val;
 	printk(KERN_INFO "w25q probe called\n");
+
 	ret =Read_ID(spi);
+	if (ret) return ret;
+	
+	ret=rd_state(spi,0x05, &raw_val);
+	if (ret) return ret;
+	printk(KERN_INFO "WEL is : %d\n",(raw_val >> 1)& 1 );
+
+	ret =write_en(spi);
+	if(ret) return ret;
+
+	ret=rd_state(spi,0x05, &raw_val);
+	if (ret) return ret;
+	if(raw_val & (1 <<1)){
+		printk(KERN_INFO"WEL is set 1 \n");
+	}
 	return ret;
 }
 static int w25q_remove(struct spi_device *spi)
