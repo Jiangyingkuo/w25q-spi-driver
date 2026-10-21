@@ -48,6 +48,25 @@ ef, 40, 17
 WEL is : 0
 WEL is set 1
 ```
+## Read Data(03h)
+參考datasheet 8.2.6
+
+送出cmd`0x03` + 3 bytes address 後讀回資料
+## Erase Sector(20h)
+參考datasheet 8.2.17
+
+送出cmd`0x20`+ 3 bytes address 抹除該位址所在的4KB sector，抹除後內容變回`0xFF`
+### erase test
+從位址`0x000005`讀 251 bytes，抹除sector 0 後再讀一次：
+![sector erase test](docs/sector_erase_test.png)
+
 ## references
 W25Q64 datasheet
 https://docs.rs-online.com/9bfc/0900766b81704060.pdf
+
+## Note
+總共128個block 故需要7個bit
+每個block有16 個sector故需4個bit  
+每個sector 有16 page 故需4個bit 
+每個page 有256個byte 故需 8個bit 
+所以一共是23個bit
