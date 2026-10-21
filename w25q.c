@@ -5,6 +5,9 @@
 #include <linux/delay.h>
 
 #define ERASE_SEC_CMD 0X20
+#define PAGE_PROGRAM_CMD 0x02
+#define TEST_ERASE	0
+#define TEST_PAGE_PROG  1
 static u8 rd_cmd =0x03;
 
 //Read JEDEC ID
@@ -124,6 +127,48 @@ static int erase_sec(struct spi_device *spi,int addr)
 	return ret;
 }
 
+//page program(02h)
+static int page_pgm(struct spi_device *spi,int addr,int len,const u8 *buf)
+{
+	int ret;
+	u8 cmd_addr[4];
+	struct spi_transfer t[2];
+	struct spi_message m;
+	spi_message_init(&m);
+	memset(t,0,sizeof(t));
+
+	/* check if write beyond page boundary
+	addr + len - 1 :page number of the last byte written*/
+	if (len <= 0 || (addr >> 8) != ((addr + len - 1) >> 8))
+		return -EINVAL;
+
+	cmd_addr[0]=PAGE_PROGRAM_CMD;
+	cmd_addr[1]=(u8)(addr >>16);
+	cmd_addr[2]=(u8)(addr >>8);
+	cmd_addr[3]=(u8)addr;
+
+	t[0].tx_buf=cmd_addr;
+	t[0].len=sizeof(cmd_addr);
+	spi_message_add_tail(&t[0],&m);
+
+	t[1].tx_buf=buf;
+	t[1].len=len;
+	spi_message_add_tail(&t[1],&m);
+
+	/*write enable before page program*/
+	ret=write_en(spi);
+	if(ret) return ret;
+
+	ret =spi_sync(spi, &m);
+	if(ret) {
+		printk(KERN_ERR"page program failed %d\n",ret);
+		return ret;
+	}
+
+	msleep(5);   /* TODO: replace with wait_ready() */
+	return ret;
+}
+
 static int w25q_probe(struct spi_device *spi)
 {
 	int ret,len=251;
@@ -154,6 +199,7 @@ static int w25q_probe(struct spi_device *spi)
 	if (!ret)
 		print_hex_dump(KERN_INFO, "w25q: ", DUMP_PREFIX_OFFSET, 16, 1,data_buff, len, false);
 
+#if TEST_ERASE
 	//erase sector , address: 0x000000
 	ret=erase_sec(spi,0x000000);
 	if(ret)
@@ -165,7 +211,9 @@ static int w25q_probe(struct spi_device *spi)
 	ret=rd_data(spi,0x000005,len,data_buff);
 	if (!ret)
 		print_hex_dump(KERN_INFO, "w25q: ", DUMP_PREFIX_OFFSET, 16, 1,data_buff, len, false);
-
+#endif
+#if TEST_PAGE_PROG
+#endif
 	err_free:
 		kfree(data_buff);
 		return ret;
