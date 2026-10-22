@@ -1,5 +1,6 @@
 # w25q-spi-driver
 W25Qxx SPI NOR flash client driver for Raspberry Pi 3 (Linux 4.14)
+![hardware setup](docs/Hardware.png)
 
 ## Device Tree Overlay
 使用device tree compiler將 overlay `w25q-overlay.dts`編譯成`w25q.dtbo`：
