@@ -4,10 +4,12 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 
-#define ERASE_SEC_CMD 0X20
 #define PAGE_PROGRAM_CMD 0x02
-#define TEST_ERASE	0
+#define STAT_REG1 0X05
+#define ERASE_SEC_CMD 0X20
+#define TEST_ERASE	1
 #define TEST_PAGE_PROG  1
+
 static u8 rd_cmd =0x03;
 
 //Read JEDEC ID
@@ -53,6 +55,7 @@ static int write_en(struct spi_device *spi)
 		printk(KERN_ERR"write enable failed:%d\n",ret);
 	return ret;
 }
+
 //read status register 1/2/3
 static int rd_state(struct spi_device *spi,const u8 cmd, u8 *val)
 {
@@ -73,6 +76,24 @@ static int rd_state(struct spi_device *spi,const u8 cmd, u8 *val)
 	if(ret <0 ) 
 		printk(KERN_ERR"read status register failed: %d\n",ret);
 	return ret;
+}
+/*wait_ready
+poll status register 1,bit 0 (BUSY) until the chip is ready or timeout
+TODO: use jiffies for the timeout instead of counting loops.*/
+static int wait_ready(struct spi_device *spi,int timeout)
+{
+	u8 raw_status,bit0=0x01;
+	int ret,i;
+	for(i=0;i < timeout;i++){
+		ret=rd_state(spi,STAT_REG1, &raw_status);
+		if (ret) return ret;
+
+		/*check status register bit 0*/
+		if (!(raw_status & bit0)) return 0;
+		msleep(1);
+	}
+	printk(KERN_INFO "wait ready timeout\n");
+	return -ETIMEDOUT;
 }
 //read data(0x03)
 static int rd_data(struct spi_device *spi,int addr,int len,u8 *buf)
@@ -121,9 +142,16 @@ static int erase_sec(struct spi_device *spi,int addr)
 	t.len =sizeof(cmd_addr);
 	spi_message_add_tail(&t,&m);
 
+	/*write enable before page program*/
+	ret=write_en(spi);
+	if(ret) return ret;
+
 	ret =spi_sync(spi,&m);
-	if(ret)
+	if(ret) {
 		printk(KERN_ERR"sector erase failed:%d\n",ret);
+		return ret;
+	}
+	ret=wait_ready(spi,500);
 	return ret;
 }
 
@@ -165,7 +193,8 @@ static int page_pgm(struct spi_device *spi,int addr,int len,const u8 *buf)
 		return ret;
 	}
 
-	msleep(5);   /* TODO: replace with wait_ready() */
+	//msleep(5); /* TODO: replace with wait_ready() */
+	ret=wait_ready(spi,20);
 	return ret;
 }
 
@@ -173,21 +202,18 @@ static int w25q_probe(struct spi_device *spi)
 {
 	int ret,len=251;
 	u8 raw_val;
-	u8 *data_buff;
+	u8 *data_buff,data[30]={1,3,5,7,9,30,52,100,151,37,65,90,0};
 
 	printk(KERN_INFO "w25q probe called\n");
 
 	ret =Read_ID(spi);
 	if (ret) return ret;
 
-	ret=rd_state(spi,0x05, &raw_val);
+	ret=rd_state(spi,STAT_REG1, &raw_val);
 	if (ret) return ret;
 	printk(KERN_INFO "WEL is : %d\n",(raw_val >> 1)& 1 );
 
-	ret =write_en(spi);
-	if(ret) return ret;
-
-	ret=rd_state(spi,0x05, &raw_val);
+	ret=rd_state(spi,STAT_REG1, &raw_val);
 	if (ret) return ret;
 	if(raw_val & (1 <<1)){
 		printk(KERN_INFO"WEL is set 1 \n");
@@ -200,12 +226,11 @@ static int w25q_probe(struct spi_device *spi)
 		print_hex_dump(KERN_INFO, "w25q: ", DUMP_PREFIX_OFFSET, 16, 1,data_buff, len, false);
 
 #if TEST_ERASE
+	printk("TEST ERASE SECTOR\n");
 	//erase sector , address: 0x000000
 	ret=erase_sec(spi,0x000000);
 	if(ret)
 		goto err_free;
-
-	msleep(550);   /* TODO: replace with wait_ready() polling BUSY */
 
 	memset(data_buff,0,len);
 	ret=rd_data(spi,0x000005,len,data_buff);
@@ -213,6 +238,22 @@ static int w25q_probe(struct spi_device *spi)
 		print_hex_dump(KERN_INFO, "w25q: ", DUMP_PREFIX_OFFSET, 16, 1,data_buff, len, false);
 #endif
 #if TEST_PAGE_PROG
+	printk("TEST PAGE PROGRAM\n");
+	memcpy(data_buff, data,sizeof(data));
+	ret =page_pgm(spi,0x00000,30,data_buff);
+	if (ret) goto err_free;
+
+	memset(data_buff, 0, len);
+	ret = rd_data(spi, 0x000000, sizeof(data), data_buff);
+	if (ret)
+		goto err_free;
+
+	print_hex_dump(KERN_INFO, "w25q: ", DUMP_PREFIX_OFFSET, 16, 1,
+		       data_buff, sizeof(data), false);
+	if (memcmp(data_buff, data, sizeof(data)))
+		printk(KERN_ERR "page program verify failed\n");
+	else
+		printk(KERN_INFO "page program verify ok\n");
 #endif
 	err_free:
 		kfree(data_buff);

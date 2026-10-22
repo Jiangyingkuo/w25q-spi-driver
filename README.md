@@ -56,17 +56,31 @@ WEL is set 1
 參考datasheet 8.2.17
 
 送出cmd`0x20`+ 3 bytes address 抹除該位址所在的4KB sector，抹除後內容變回`0xFF`
-### erase test
-從位址`0x000005`讀 251 bytes，抹除sector 0 後再讀一次：
-![sector erase test](docs/sector_erase_test.png)
+
+## Page Program (02h)
+參考datasheet 8.2.15
+
+送出cmd`0x02` + 3 bytes address + 資料寫入flash，寫入前需先送`0x06`（Write Enable）
+> [!NOTE]
+> 一次最多256 bytes，且不能跨page，否則超出部分會繞回同一page開頭覆蓋資料
+
+## Wait Ready
+erase和page program在CS拉高後，晶片才開始內部操作，期間Status Register 1的bit 0為1，表示busy，會忽略其他指令。
+`wait_ready()`反覆讀取BUSY bit，直到晶片完成或超時timeout
+
+### erase and page program test
+1. 從位址`0x000005`讀 251 bytes，抹除sector 0後dump一次
+2. 接著寫入30 bytes到位址`0x000000`後再dump一次，verify ok
+![sector erase and page program test](docs/sector_erase_and_page_program.png)
 
 ## references
 W25Q64 datasheet
+
 https://docs.rs-online.com/9bfc/0900766b81704060.pdf
 
 ## Note
-總共128個block 故需要7個bit
-每個block有16 個sector故需4個bit  
-每個sector 有16 page 故需4個bit 
-每個page 有256個byte 故需 8個bit 
-所以一共是23個bit
+- 總共128個block 故需要7個bit
+- 每個block有16 個sector故需4個bit  
+- 每個sector 有16 page 故需4個bit 
+- 每個page 有256個byte 故需 8個bit 
+- 所以一共是23個bit
