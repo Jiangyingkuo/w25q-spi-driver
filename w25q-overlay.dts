@@ -35,6 +35,22 @@
 
 				/*SCLK max speed*/
 				spi-max-frequency = <20000000>;
+
+				partitions {
+					compatible = "fixed-partitions";
+					#address-cells =<1>;
+					#size-cells =<1>;
+
+					partition@0 {
+						label = "data";
+						reg = <0x000000 0x700000>;
+					};
+
+					partition@700000 {
+						label = "test";
+						reg = <0x700000 0x100000>;
+					};
+				};
             };
         };
     };
