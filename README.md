@@ -10,8 +10,8 @@ W25Qxx SPI NOR flash client driver for Raspberry Pi 3 (Linux 4.14)
 - [x] DT partitions（data 7MB、test 1MB）
 - [x] 私有struct、註冊MTD device
 - [ ] MTD callbacks
-  - [ ] `_read`
-  - [ ] `_write`
+  - [x] `_read`
+  - [x] `_write`
   - [ ] `_erase`
 - [ ] 以`/dev/mtd`測試讀寫抹除
 - [ ] data分割區掛載JFFS2
@@ -112,9 +112,10 @@ MTD 在probe結束後，會透過callback(`_read` , `_write` , `_erase`)存取fl
 3. `insmod w25q.ko`
 4. `dmesg`
 5. `cat /proc/mtd`
+
 ![partitions](docs/mtd_register_partitions.png)
+
 ![_read test](docs/mtd_read_test.png)
-![_write test]
 
 ## references
 
