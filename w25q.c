@@ -262,7 +262,27 @@ static int w25q_mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *r
 }
 static int w25q_mtd_erase (struct mtd_info *mtd, struct erase_info *instr)
 {
-	return -1;
+	int ret,sec_num,i;
+	struct w25q_flash *flash;
+	uint64_t addr = instr->addr;
+	uint64_t len = instr->len;
+	uint64_t first_sec = addr >>12;
+	uint64_t last_sec = (addr + len-1) >> 12;
+	instr->state =MTD_ERASE_FAILED;
+	flash = container_of(mtd, struct w25q_flash, mtd);
+
+	sec_num = last_sec - first_sec +1;
+
+	addr =first_sec << 12;
+	for (i=0; i < sec_num; i++){
+		ret = erase_sec(flash->spi,addr);
+		if (ret) return ret;
+
+		addr +=0x1000;
+	}
+	instr->state =MTD_ERASE_DONE;
+	mtd_erase_callback(instr);
+	return 0;
 }
 
 static int w25q_probe(struct spi_device *spi)
