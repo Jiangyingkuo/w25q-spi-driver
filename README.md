@@ -2,6 +2,20 @@
 W25Qxx SPI NOR flash client driver for Raspberry Pi 3 (Linux 4.14)
 ![hardware setup](docs/Hardware.png)
 
+## Status
+- [x] Device tree overlay、SPI配對（of_match_table）
+- [x] Read JEDEC ID / Read Status Register / Write Enable
+- [x] Read Data / Sector Erase / Page Program
+- [x] wait_ready：polling BUSY bit
+- [x] DT partitions（data 7MB、test 1MB）
+- [x] 私有struct、註冊MTD device
+- [ ] MTD callbacks
+  - [ ] `_read`
+  - [ ] `_write`
+  - [ ] `_erase`
+- [ ] 以`/dev/mtd`測試讀寫抹除
+- [ ] data分割區掛載JFFS2
+
 ## Device Tree Overlay
 使用device tree compiler將 overlay `w25q-overlay.dts`編譯成`w25q.dtbo`：
 ```
@@ -67,6 +81,7 @@ WEL is set 1
 
 ## Wait Ready
 erase和page program在CS拉高後，晶片才開始內部操作，期間Status Register 1的bit 0為1，表示busy，會忽略其他指令。
+
 `wait_ready()`反覆讀取BUSY bit，直到晶片完成或超時timeout
 
 ### erase and page program test
@@ -74,7 +89,19 @@ erase和page program在CS拉高後，晶片才開始內部操作，期間Status 
 2. 接著寫入30 bytes到位址`0x000000`後再dump一次，verify ok
 ![sector erase and page program test](docs/sector_erase_and_page_program.png)
 
+## Register as MTD device and DT partitions
+將w25q註冊成MTD裝置，並依device tree中描述的partitions 切出`data` 與 `test`兩個分割區
+
+### private struct
+MTD 在probe結束後，會透過callback(`_read` , `_write` , `_erase`)存取flash,但 callback 只會傳入`mtd`，不會傳入`spi`
+而實際讀寫如 read data, page program, sector erase都需要 `spi` 才能進行 SPI transfer; 所以在probe中用`devm_kzalloc`配置struct w25q_flash 於kernel heap中，儲存`spi`並嵌入`mtd_info`
+![struct relationship](docs/w25q_struct_relationships.png)
+
+- MTD callback：用`container_of(mtd)`找回flash，再拿`flash->spi`
+- remove：用`spi_get_drvdata(spi)`找回flash（probe時以`spi_set_drvdata`保存）
+
 ## references
+
 W25Q64 datasheet
 
 https://docs.rs-online.com/9bfc/0900766b81704060.pdf
