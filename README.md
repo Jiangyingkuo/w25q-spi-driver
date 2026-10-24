@@ -99,6 +99,22 @@ MTD 在probe結束後，會透過callback(`_read` , `_write` , `_erase`)存取fl
 
 - MTD callback：用`container_of(mtd)`找回flash，再拿`flash->spi`
 - remove：用`spi_get_drvdata(spi)`找回flash（probe時以`spi_set_drvdata`保存）
+### _read
+用`container_of` 從`mtd`取得`flash`，呼叫`rd_data()`讀取，成功後以`*retlen`回報實際讀取的bytes數
+### _write
+用`container_of` 從`mtd`取得`flash`，呼叫`page_pgm()`執行寫入，成功後以`*retlen`回報實際寫入的bytes數
+因page program一次寫入最多只能256個byte，且無法跨page，所以寫入範圍跨過page邊界時，需多次呼叫page_pgm完成寫入
+
+### 實機測試
+載入driver後確認 partitions，再分別測試`_read`、`_write`：
+1. `modprobe mtd`
+2. `make`
+3. `insmod w25q.ko`
+4. `dmesg`
+5. `cat /proc/mtd`
+![partitions](docs/mtd_register_partitions.png)
+![_read test](docs/mtd_read_test.png)
+![_write test]
 
 ## references
 

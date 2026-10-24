@@ -224,7 +224,41 @@ static int w25q_mtd_read (struct mtd_info *mtd, loff_t from, size_t len, size_t 
 }
 static int w25q_mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen, const u_char *buf)
 {
-	return -1;
+	int ret,i=0,num=0,left=0;
+	struct w25q_flash *flash;
+	loff_t next_page;
+	flash = container_of(mtd, struct w25q_flash, mtd);
+
+	*retlen =0;
+
+	next_page = ((to >> 8) +1) << 8;
+	ret = page_pgm(flash -> spi,to,min_t(size_t, next_page - to, len), buf);
+	if (ret) return ret;
+
+	*retlen += min_t(size_t, next_page - to, len);
+	buf += *retlen;
+
+	(len > (next_page -to))?(len -= next_page-to) : (len =0);
+	num = len/256;
+	left = len%256;
+
+	for(i=0; i < num; i++)
+	{
+		ret = page_pgm(flash -> spi,next_page,256,buf);
+		if(ret) return ret;
+
+		*retlen += 256;
+		buf +=256;
+		next_page +=0x100;
+	}
+
+	//rest
+	if(left ==0) return 0;
+	ret =page_pgm(flash -> spi,next_page,left,buf);
+	if(ret) return ret;
+	*retlen += left;
+
+	return 0;
 }
 static int w25q_mtd_erase (struct mtd_info *mtd, struct erase_info *instr)
 {
