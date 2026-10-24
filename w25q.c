@@ -3,19 +3,30 @@
 #include <linux/mod_devicetable.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
+#include <linux/mtd/mtd.h>    /* struct mtd_info */
 
 #define PAGE_PROGRAM_CMD 0x02
+#define RD_CMD 0X03
 #define STAT_REG1 0X05
+#define WEL_CMD 0x06
 #define ERASE_SEC_CMD 0X20
-#define TEST_ERASE	1
-#define TEST_PAGE_PROG  1
+#define RD_ID_CMD 0x9F
+#define TEST_ERASE	0
+#define TEST_PAGE_PROG  0
 
-static u8 rd_cmd =0x03;
+/*
+* after probe ,MTD callbacks still need spi for SPI transfer, 
+* so save spi int this struct, allocated on the kernel heap.
+*/
+struct w25q_flash{
+	struct spi_device *spi;
+	struct mtd_info mtd;	/*container_of(mtd) ->flash, flash ->spi */
+};
 
 //Read JEDEC ID
 static int Read_ID(struct spi_device *spi)
 {
-	u8 cmd =0x9F;
+	u8 cmd =RD_ID_CMD;
 	int ret;
 	char rd_buf[3] ={0};
 	struct spi_transfer t[2];
@@ -41,7 +52,7 @@ static int Read_ID(struct spi_device *spi)
 // Write Enable (06h)
 static int write_en(struct spi_device *spi)
 {
-	u8 cmd =0x06;
+	u8 cmd =WEL_CMD;
 	int ret;
 	struct spi_transfer t ={0};
 	struct spi_message m;
@@ -105,7 +116,7 @@ static int rd_data(struct spi_device *spi,int addr,int len,u8 *buf)
 	spi_message_init(&m);
 	memset(t,0,sizeof(t));
 
-	cmd_addr[0]=rd_cmd;
+	cmd_addr[0]=RD_CMD;
 	cmd_addr[1] =(u8)(addr >>16);
 	cmd_addr[2] =(u8)(addr >>8);
 	cmd_addr[3] =(u8)(addr);
@@ -197,6 +208,19 @@ static int page_pgm(struct spi_device *spi,int addr,int len,const u8 *buf)
 	ret=wait_ready(spi,20);
 	return ret;
 }
+/* MTD callbacks */
+static int w25q_mtd_read (struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen, u_char *buf)
+{
+	return -1;
+}
+static int w25q_mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen, const u_char *buf)
+{
+	return -1;
+}
+static int w25q_mtd_erase (struct mtd_info *mtd, struct erase_info *instr)
+{
+	return -1;
+}
 
 static int w25q_probe(struct spi_device *spi)
 {
@@ -204,26 +228,55 @@ static int w25q_probe(struct spi_device *spi)
 	u8 raw_val;
 	u8 *data_buff,data[30]={1,3,5,7,9,30,52,100,151,37,65,90,0};
 
+	struct w25q_flash *flash;
+
+	/* Bind this memory to the W25Q device (&spi->dev):
+	  when the device is removed. No kfree() needed. */
+	flash = devm_kzalloc(&spi->dev, sizeof(*flash), GFP_KERNEL);
+	if (!flash)
+		return -ENOMEM;
+
+	flash ->spi = spi;
+	/* save flash in spi->dev.driver_data, so remove() can get it back from spi */
+	spi_set_drvdata(spi, flash);
+
 	printk(KERN_INFO "w25q probe called\n");
 
 	ret =Read_ID(spi);
 	if (ret) return ret;
 
+	flash ->mtd.name = dev_name(&spi->dev);
+	flash ->mtd.type = MTD_NORFLASH;
+	flash ->mtd.flags = MTD_CAP_NORFLASH;
+	flash ->mtd.size = 8*1024*1024;
+	flash ->mtd.erasesize = 4*1024;  /*minimun erase unit: sector (4KB)*/
+	flash ->mtd.writesize =1;
+
+	/* pass the device node (flash@1) to MTD to find "partitions" describtion*/
+	mtd_set_of_node(&flash->mtd, spi->dev.of_node);
+
+	//configure callback function
+	flash ->mtd._read =w25q_mtd_read;
+	flash ->mtd._write=w25q_mtd_write;
+	flash ->mtd._erase=w25q_mtd_erase;
+
+	ret = mtd_device_register(&flash ->mtd, NULL, 0);
+	if(ret)
+		return ret;
+
+#if 0
 	ret=rd_state(spi,STAT_REG1, &raw_val);
 	if (ret) return ret;
 	printk(KERN_INFO "WEL is : %d\n",(raw_val >> 1)& 1 );
 
-	ret=rd_state(spi,STAT_REG1, &raw_val);
-	if (ret) return ret;
-	if(raw_val & (1 <<1)){
-		printk(KERN_INFO"WEL is set 1 \n");
-	}
 	data_buff =(u8 *)kmalloc(len,GFP_KERNEL);
 	if (data_buff ==NULL)
 		return -ENOMEM;
 	ret=rd_data(spi,0x000005,len,data_buff);
-	if (!ret)
-		print_hex_dump(KERN_INFO, "w25q: ", DUMP_PREFIX_OFFSET, 16, 1,data_buff, len, false);
+	if (ret)
+		goto err_free;
+	print_hex_dump(KERN_INFO, "w25q: ", DUMP_PREFIX_OFFSET, 16, 1,data_buff, len, false);
+#endif
 
 #if TEST_ERASE
 	printk("TEST ERASE SECTOR\n");
@@ -256,13 +309,19 @@ static int w25q_probe(struct spi_device *spi)
 		printk(KERN_INFO "page program verify ok\n");
 #endif
 	err_free:
+	#if TEST_PAGE_PROG
 		kfree(data_buff);
+	#endif
 		return ret;
 }
 static int w25q_remove(struct spi_device *spi)
 {
+	/* get back flash saved by spi_set_drvdata() in probe */
+	struct w25q_flash *flash = spi_get_drvdata(spi);
+	
 	printk(KERN_INFO "w25q remove called\n");
-	return 0;
+
+	return mtd_device_unregister(&flash->mtd);
 }
 
 static const struct of_device_id w25q_of_match[] ={
