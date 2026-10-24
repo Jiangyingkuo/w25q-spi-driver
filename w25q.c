@@ -211,7 +211,16 @@ static int page_pgm(struct spi_device *spi,int addr,int len,const u8 *buf)
 /* MTD callbacks */
 static int w25q_mtd_read (struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen, u_char *buf)
 {
-	return -1;
+	int ret;
+	struct w25q_flash *flash;
+	flash = container_of(mtd, struct w25q_flash, mtd);
+
+	*retlen=0;
+	ret = rd_data(flash -> spi, from, len, buf);
+	if (ret) return ret;
+
+	*retlen = len;
+	return 0;
 }
 static int w25q_mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen, const u_char *buf)
 {
