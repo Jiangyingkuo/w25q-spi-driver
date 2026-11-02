@@ -4,6 +4,7 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/mtd/mtd.h>    /* struct mtd_info */
+#include <linux/mutex.h>
 
 #define PAGE_PROGRAM_CMD 0x02
 #define RD_CMD 0X03
@@ -14,6 +15,8 @@
 #define TEST_ERASE	0
 #define TEST_PAGE_PROG  0
 
+static int erase_all;
+module_param(erase_all, int, 0);
 /*
 * after probe ,MTD callbacks still need spi for SPI transfer, 
 * so save spi int this struct, allocated on the kernel heap.
@@ -21,6 +24,7 @@
 struct w25q_flash{
 	struct spi_device *spi;
 	struct mtd_info mtd;	/*container_of(mtd) ->flash, flash ->spi */
+	struct mutex lock;
 };
 
 //Read JEDEC ID
@@ -208,19 +212,24 @@ static int page_pgm(struct spi_device *spi,int addr,int len,const u8 *buf)
 	ret=wait_ready(spi,20);
 	return ret;
 }
+
 /* MTD callbacks */
 static int w25q_mtd_read (struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen, u_char *buf)
 {
 	int ret;
 	struct w25q_flash *flash;
 	flash = container_of(mtd, struct w25q_flash, mtd);
+	mutex_lock(&flash->lock);
 
 	*retlen=0;
 	ret = rd_data(flash -> spi, from, len, buf);
-	if (ret) return ret;
-
+	if (ret)
+		goto out;
 	*retlen = len;
-	return 0;
+
+	out:
+		mutex_unlock(&flash->lock);
+		return ret;
 }
 static int w25q_mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen, const u_char *buf)
 {
@@ -228,12 +237,14 @@ static int w25q_mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *r
 	struct w25q_flash *flash;
 	loff_t next_page;
 	flash = container_of(mtd, struct w25q_flash, mtd);
+	mutex_lock(&flash->lock);
 
 	*retlen =0;
 
 	next_page = ((to >> 8) +1) << 8;
 	ret = page_pgm(flash -> spi,to,min_t(size_t, next_page - to, len), buf);
-	if (ret) return ret;
+	if (ret)
+		goto out;
 
 	*retlen += min_t(size_t, next_page - to, len);
 	buf += *retlen;
@@ -245,7 +256,8 @@ static int w25q_mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *r
 	for(i=0; i < num; i++)
 	{
 		ret = page_pgm(flash -> spi,next_page,256,buf);
-		if(ret) return ret;
+		if(ret)
+			goto out;
 
 		*retlen += 256;
 		buf +=256;
@@ -253,12 +265,16 @@ static int w25q_mtd_write(struct mtd_info *mtd, loff_t to, size_t len, size_t *r
 	}
 
 	//rest
-	if(left ==0) return 0;
+	if(left ==0)
+		goto out;
 	ret =page_pgm(flash -> spi,next_page,left,buf);
-	if(ret) return ret;
+	if(ret)
+		goto out;
 	*retlen += left;
 
-	return 0;
+	out:
+		mutex_unlock(&flash->lock);
+		return ret;
 }
 static int w25q_mtd_erase (struct mtd_info *mtd, struct erase_info *instr)
 {
@@ -269,27 +285,35 @@ static int w25q_mtd_erase (struct mtd_info *mtd, struct erase_info *instr)
 	uint64_t first_sec = addr >>12;
 	uint64_t last_sec = (addr + len-1) >> 12;
 	instr->state =MTD_ERASE_FAILED;
+
 	flash = container_of(mtd, struct w25q_flash, mtd);
+	mutex_lock(&flash->lock);
 
 	sec_num = last_sec - first_sec +1;
 
 	addr =first_sec << 12;
 	for (i=0; i < sec_num; i++){
 		ret = erase_sec(flash->spi,addr);
-		if (ret) return ret;
+		if (ret)
+			goto out;
 
 		addr +=0x1000;
 	}
 	instr->state =MTD_ERASE_DONE;
-	mtd_erase_callback(instr);
-	return 0;
+
+	out:
+		mutex_unlock(&flash->lock);
+		if(!ret)
+			mtd_erase_callback(instr);
+		return ret;
 }
 
 static int w25q_probe(struct spi_device *spi)
 {
-	int ret,len=251;
+	int ret,i,len=251;
 	u8 raw_val;
 	u8 *data_buff,data[30]={1,3,5,7,9,30,52,100,151,37,65,90,0};
+	uint64_t addr=0x00000;
 
 	struct w25q_flash *flash;
 
@@ -313,7 +337,7 @@ static int w25q_probe(struct spi_device *spi)
 	flash ->mtd.flags = MTD_CAP_NORFLASH;
 	flash ->mtd.size = 8*1024*1024;
 	flash ->mtd.erasesize = 4*1024;  /*minimun erase unit: sector (4KB)*/
-	flash ->mtd.writesize =1;
+	flash ->mtd.writesize =1;		/*the minimum size NOR can write*/
 
 	/* pass the device node (flash@1) to MTD to find "partitions" describtion*/
 	mtd_set_of_node(&flash->mtd, spi->dev.of_node);
@@ -323,10 +347,21 @@ static int w25q_probe(struct spi_device *spi)
 	flash ->mtd._write=w25q_mtd_write;
 	flash ->mtd._erase=w25q_mtd_erase;
 
+	if(erase_all){
+		printk(KERN_INFO "w25q: erase all start\n");
+		for(i=0;i < 128*16; i++){
+			ret = erase_sec(spi,addr);
+			if (ret) return ret;
+			addr += 0x1000;
+		}
+		printk(KERN_INFO "w25q: erase all done\n");
+	}
+
+	mutex_init(&flash->lock);
+
 	ret = mtd_device_register(&flash ->mtd, NULL, 0);
 	if(ret)
 		return ret;
-
 #if 0
 	ret=rd_state(spi,STAT_REG1, &raw_val);
 	if (ret) return ret;
