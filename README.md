@@ -9,11 +9,11 @@ W25Qxx SPI NOR flash client driver for Raspberry Pi 3 (Linux 4.14)
 - [x] wait_ready：polling BUSY bit
 - [x] DT partitions（data 7MB、test 1MB）
 - [x] 私有struct、註冊MTD device
-- [ ] MTD callbacks
+- [x] MTD callbacks
   - [x] `_read`
   - [x] `_write`
-  - [ ] `_erase`
-- [ ] 以`/dev/mtd`測試讀寫抹除
+  - [x] `_erase`
+- [x] 以`/dev/mtd`測試讀寫抹除
 - [ ] data分割區掛載JFFS2
 
 ## Device Tree Overlay
@@ -104,7 +104,10 @@ MTD 在probe結束後，會透過callback(`_read` , `_write` , `_erase`)存取fl
 ### _write
 用`container_of` 從`mtd`取得`flash`，呼叫`page_pgm()`執行寫入，成功後以`*retlen`回報實際寫入的bytes數
 因page program一次寫入最多只能256個byte，且無法跨page，所以寫入範圍跨過page邊界時，需多次呼叫page_pgm完成寫入
+### _erase
+用`container_of`從`mtd`取得`flash`，從抹除的起始位址加上len，計算跨了幾個sector，逐一呼叫`erase_sec()`抹除
 
+抹除後設`MTD_ERASE_DONE`，再呼叫`mtd_erase_callback()`通知上層
 ### 實機測試
 載入driver後確認 partitions，再分別測試`_read`、`_write`：
 1. `modprobe mtd`
@@ -115,7 +118,16 @@ MTD 在probe結束後，會透過callback(`_read` , `_write` , `_erase`)存取fl
 
 ![partitions](docs/mtd_register_partitions.png)
 
-![_read test](docs/mtd_read_test.png)
+#### 以/dev/mtd測試讀寫
+在test分割區（mtd0）的offset 250寫入10個bytes，同時驗證跨page邊界寫入(0x100)：
+
+```
+hexdump -C -s 0xF0 -n 32 /dev/mtd0
+printf "0123456789" | dd of=/dev/mtd0 bs=10 seek=25
+hexdump -C -s 0xF0 -n 32 /dev/mtd0
+```
+
+![_read test & _write test](docs/mtd_read_test_write_test.png)
 
 ## references
 
