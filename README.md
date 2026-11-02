@@ -153,6 +153,9 @@ mount -t jffs2 /dev/mtdblock1 /mnt/data
 umount /mnt/data
 rmmod w25q
 ```
+### mount test
+寫入檔案後卸載、重新載入driver再掛載，檔案內容還在
+![mount test](docs/mount_test.png)
 
 ## references
 
