@@ -13,7 +13,8 @@ W25Qxx SPI NOR flash client driver for Raspberry Pi 3 (Linux 4.14)
   - [x] `_read`
   - [x] `_write`
   - [x] `_erase`
-- [x] 以`/dev/mtd`測試讀寫抹除
+- [x] mutex protect `_read` / `_write` / `_erase`
+- [x] 以`/dev/mtd`測試讀寫
 - [ ] data分割區掛載JFFS2
 
 ## Device Tree Overlay
@@ -97,6 +98,7 @@ MTD 在probe結束後，會透過callback(`_read` , `_write` , `_erase`)存取fl
 而實際讀寫如 read data, page program, sector erase都需要 `spi` 才能進行 SPI transfer; 所以在probe中用`devm_kzalloc`配置struct w25q_flash 於kernel heap中，儲存`spi`並嵌入`mtd_info`
 ![struct relationship](docs/w25q_struct_relationships.png)
 
+## MTD callbacks
 - MTD callback：用`container_of(mtd)`找回flash，再拿`flash->spi`
 - remove：用`spi_get_drvdata(spi)`找回flash（probe時以`spi_set_drvdata`保存）
 ### _read
@@ -109,7 +111,7 @@ MTD 在probe結束後，會透過callback(`_read` , `_write` , `_erase`)存取fl
 
 抹除後設`MTD_ERASE_DONE`，再呼叫`mtd_erase_callback()`通知上層
 ### 實機測試
-載入driver後確認 partitions，再分別測試`_read`、`_write`：
+載入driver後確認 partitions：
 1. `modprobe mtd`
 2. `make`
 3. `insmod w25q.ko`
@@ -118,7 +120,14 @@ MTD 在probe結束後，會透過callback(`_read` , `_write` , `_erase`)存取fl
 
 ![partitions](docs/mtd_register_partitions.png)
 
-#### 以/dev/mtd測試讀寫
+## mutex protect `_read` / `_write` / `_erase`
+同一顆flash可能同時被多個地方存取，如兩個process同時讀寫`/dev/mtd0`
+
+晶片BUSY時會忽略其他指令，driver卻照樣回報成功
+
+在`struct w25q_flash`加入mutex，`_read`、`_write`、`_erase`開頭lock、結尾unlock，
+使同一時間只會有一個操作執行
+## 以/dev/mtd測試讀寫
 在test分割區（mtd0）的offset 250寫入10個bytes，同時驗證跨page邊界寫入(0x100)：
 
 ```
@@ -128,6 +137,22 @@ hexdump -C -s 0xF0 -n 32 /dev/mtd0
 ```
 
 ![_read test & _write test](docs/mtd_read_test_write_test.png)
+
+## data分割區掛載JFFS2
+掛載:
+```
+modprobe mtd
+modprobe mtdblock
+insmod w25q.ko
+mount -t jffs2 /dev/mtdblock1 /mnt/data
+```
+- `mtdblock`：產生`/dev/mtdblock1`
+
+卸載:
+```
+umount /mnt/data
+rmmod w25q
+```
 
 ## references
 
