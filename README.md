@@ -15,7 +15,7 @@ W25Qxx SPI NOR flash client driver for Raspberry Pi 3 (Linux 4.14)
   - [x] `_erase`
 - [x] mutex protect `_read` / `_write` / `_erase`
 - [x] 以`/dev/mtd`測試讀寫
-- [ ] data分割區掛載JFFS2
+- [x] data分割區掛載JFFS2
 
 ## Device Tree Overlay
 使用device tree compiler將 overlay `w25q-overlay.dts`編譯成`w25q.dtbo`：
@@ -97,6 +97,9 @@ erase和page program在CS拉高後，晶片才開始內部操作，期間Status 
 MTD 在probe結束後，會透過callback(`_read` , `_write` , `_erase`)存取flash,但 callback 只會傳入`mtd`，不會傳入`spi`
 而實際讀寫如 read data, page program, sector erase都需要 `spi` 才能進行 SPI transfer; 所以在probe中用`devm_kzalloc`配置struct w25q_flash 於kernel heap中，儲存`spi`並嵌入`mtd_info`
 ![struct relationship](docs/w25q_struct_relationships.png)
+
+> [!NOTE]
+> 另外加入`struct mutex lock`於private struct，讓`_read`、`_write`、`_erase`同一時間只有一個在存取flash
 
 ## MTD callbacks
 - MTD callback：用`container_of(mtd)`找回flash，再拿`flash->spi`
